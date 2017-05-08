@@ -30,6 +30,9 @@ immutable IV
 	defense::Int8
 end
 
+const minIV = IV(0, 0, 0)
+const maxIV = IV(15, 15, 15)
+
 type Pokebeast
 	nr::Int16
 	twicelevel::Int8 ## 1..79
@@ -51,7 +54,7 @@ name(p::Pokebeast) = stats[p.nr, :name]
 nr(name::String) = get(name2nr, name, KeyError("Beast not found"))
 level(p::Pokebeast) = level(p.twicelevel)
 
-## constructor from name and level
+## constructor from name and normal level
 Pokebeast(name::String, level::Real, iv::IV) = Pokebeast(nr(name), twicelevel(level), iv)
 
 ## initialize the cp modifier tables
@@ -69,16 +72,16 @@ for i in 1:0.5:39.5
 	push!(cpmtab, c)
 end
 
-stardust =  repmat([200, 400, 600, 800, 1000, 1300, 1600, 1900, 2200, 2500, 3000, 3500, 4000, 4500, 5000, 6000, 7000, 8000, 9000, 10000]', 4)[1:length(cpmtab)]
+stardusttab =  repmat([200, 400, 600, 800, 1000, 1300, 1600, 1900, 2200, 2500, 3000, 3500, 4000, 4500, 5000, 6000, 7000, 8000, 9000, 10000]', 4)[1:length(cpmtab)]
+candytab = vcat(fill(1, 20), fill(2, 20), fill(3, 10), fill(4, 10), vec(repmat([6, 8, 10, 12, 15]', 4)))[1:length(cpmtab)]
 
 ## cp modifier table lookup
 cpm(level::Real) = cpmtab[twicelevel(level)]
 cpm(p::Pokebeast) = cpmtab[clamp(p.twicelevel, 1, length(cpmtab))]
+cpm{T<:Real}(levels::Array{T}) = [cpm(level) for level in levels]
 
-function hp(p::Pokebeast)
-	beast = stats[p.nr, :]
-	return floor(Int, (beast[1, :stamina] + p.iv.stamina) * cpm(p))
-end
+hp(stamina, cpm) = floor(Int, stamina * cpm)
+hp(p::Pokebeast) = hp(stats[p.nr, :stamina] + p.iv.stamina, cpm(p))
 
 function ivm(p::Pokebeast)
 	"""IV modifier"""
@@ -86,6 +89,7 @@ function ivm(p::Pokebeast)
 	return (beast[1, :attack] + p.iv.attack) * sqrt((beast[1, :stamina] + p.iv.stamina) * (beast[1, :defense] + p.iv.defense))
 end
 
+cp(ivm, cpm) =  floor(Int, ivm * cpm^2 / 10)
 cp(p::Pokebeast) = floor(Int, ivm(p) * cpm(p)^2 / 10)
 
 hp(name::String, level::Real, iv::IV) = hp(Pokebeast(name, level, iv))
@@ -136,8 +140,8 @@ end
 
 function addstats(df::AbstractDataFrame)
 	nr = df[1,:beast].nr
-	minivm = ivm(Pokebeast(nr, 1, IV(0,0,0)))
-	maxivm = ivm(Pokebeast(nr, 1, IV(15,15,15)))
+	minivm = ivm(Pokebeast(nr, 1, minIV))
+	maxivm = ivm(Pokebeast(nr, 1, maxIV))
 	return @byrow! df begin
 	    @newcol overall::DataArray{Int}
 		@newcol best::DataArray{String}
@@ -149,8 +153,28 @@ function addstats(df::AbstractDataFrame)
 	end
 end
 
+function search1(nr::Integer, c::Integer, h::Integer, s::Integer, best::String="", val::Integer=-1, overall::Integer=-1)
+	twicelevels = find(s .== stardusttab)
+	length(twicelevels) > 0 || error("Stardust value not found")
+	ivrange = 0:15
+	s, a, d = convert(Array, pkm.stats[nr, [:stamina, :attack, :defense]])
+	hps = floor(Int, broadcast(*, s + ivrange, cpmtab[twicelevels]')) ## hp matrix
+	sti, twi = ind2sub((16,length(twicelevels)), find(hps .== h))
+	res = []
+	for (st, tw) in zip(ivrange[sti], twicelevels[twi])
+		ivms = vec(broadcast(*, sqrt((s+st) * (d+ivrange)), a + ivrange'))
+		cps = cp(ivms, cpmtab[tw])
+		cpi = find(cps .== c)
+		di, ai = ind2sub((16,16), cpi)
+		for (i, j, k) in zip(ai, di, cpi)
+			push!(res, (Pokebeast(nr, tw, IV(st, ivrange[i], ivrange[j])), ivms[k]))
+		end
+	end
+	return addstats(DataFrame(beast=[r[1] for r in res], ivm=[r[2] for r in res], hp=h, cp=c))
+end
+
 function search(nr::Integer, c::Integer, h::Integer, s::Integer, best::String="", val::Integer=-1, overall::Integer=-1)
-	twicelevels = find(s .== stardust)
+	twicelevels = find(s .== stardusttab)
 	length(twicelevels) > 0 || error("Stardust value not found")
 	df = []
 	for tw in twicelevels
@@ -177,10 +201,11 @@ search(name::String, args...) = search(nr(name), args...)
 
 ## catchall, not necessarily correct for every beast.
 evolve(nr::Integer, times::Integer=1) = nr + times
-evolve(p::Pokebeast) = Pokebeast(evolve(p.nr), p.twicelevel, p.iv)
-function evolve(df::AbstractDataFrame)
+evolve(p::Pokebeast, times::Integer=1) = Pokebeast(evolve(p.nr, times), p.twicelevel, p.iv)
+
+function update(df::AbstractDataFrame, func::Function, args...)
 	df = @byrow! df begin
-	    :beast = evolve(:beast)
+	    :beast = func(:beast, args...)
 		:ivm = ivm(:beast)
 		:hp = hp(:beast)
 		:cp = cp(:beast)
@@ -188,10 +213,25 @@ function evolve(df::AbstractDataFrame)
 	return addstats(df)
 end
 
+evolve(df::AbstractDataFrame, times::Integer=1) = update(df, evolve, times)
+
+up(p::Pokebeast, times::Integer=1) = Pokebeast(p.nr, p.twicelevel + times, p.iv)
+up(df::AbstractDataFrame, times::Integer=1) = update(df, up, times)
+
+setlevel(p::Pokebeast, level::Real) = Pokebeast(p.nr, twicelevel(level), p.iv)
+setlevel(df::AbstractDataFrame, level::Real) = update(df, setlevel, level)
+
+stardustcost(level::Real) = cumsum(stardusttab)[twicelevel(level)]
+candycost(level::Real) = cumsum(candytab)[twicelevel(level)]
+
+stardustcost(p::Pokebeast, level::Real) = twicelevel(level) ≤ p.twicelevel ? 0 : sum(stardusttab[p.twicelevel:twicelevel(level)-1])
+candycost(p::Pokebeast, level::Real) = twicelevel(level) ≤ p.twicelevel ? 0 : sum(candytab[p.twicelevel:twicelevel(level)-1])
+
 using Distributions
 
 Pei = Distributions.Categorical([0, 115, 0, 0, 161, 0, 0, 0, 0, 39] / 315)
 
+## how long until finding a 10K egg?  We know the exact answer: (2Pei[2] + 5Pei[5]) / Pei[10]
 function pei(dist=10)
 	d = 0.0
 	for i in 1:1000
@@ -203,6 +243,6 @@ function pei(dist=10)
 	end
 end
 
-export Pokebeast, cp, hp
+export Pokebeast, cp, hp, search
 
 end
