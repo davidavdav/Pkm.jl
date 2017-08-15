@@ -6,6 +6,7 @@ using DataFramesMeta
 
 import Base.search, Base.cp
 
+## Static data preparation
 statsfile = joinpath(dirname(dirname(@__FILE__)), "data", "stats.txt")
 stats = readtable(statsfile, separator='\t')
 
@@ -24,11 +25,29 @@ for col in [:capture, :flee]
 	stats[col] = unpercent(stats[col])
 end
 
-## turn evolve into an (empty) array of pokebeast numbers
+## turn column evolve into an (empty) array of pokebeast numbers
 stats[:evolve] = [[x for x in [parse(Int, x) for x in split(s)] if x > 0] for s in stats[:evolve]]
 
-name2nr = Dict(row[:name] => Int16(row[:nr]) for row in eachrow(stats))
+## initialize the cp modifier tables
+cpmstep = [0.009426125469, 0.008919025675, 0.008924905903, 0.00445946079]
 
+function cpmhalf(level, cpm)
+	i = round(Int, div(level, 10)) + 1
+	return sqrt.(cpm^2 + cpmstep[i])
+end
+
+cpmtab = let c = 0.094, tab = [c]
+	for i in 1:0.5:39.5
+		c = cpmhalf(i, c)
+		push!(tab, c)
+	end
+	tab
+end
+
+stardusttab =  repmat([200, 400, 600, 800, 1000, 1300, 1600, 1900, 2200, 2500, 3000, 3500, 4000, 4500, 5000, 6000, 7000, 8000, 9000, 10000]', 4)[1:length(cpmtab)]
+candytab = vcat(fill(1, 20), fill(2, 20), fill(3, 10), fill(4, 10), vec(repmat([6, 8, 10, 12, 15]', 4)))[1:length(cpmtab)]
+
+## types
 immutable IV
 	stamina::Int8
 	attack::Int8
@@ -52,35 +71,21 @@ end
 Base.show(io::IO, p::Pokebeast) = @printf(io, "%s (%d) l:%3.1f iv:%d,%d,%d", name(p), p.nr, level(p), p.iv.stamina, p.iv.attack, p.iv.defense)
 Base.show(io::IO, ::MIME"text/plain", p::Pokebeast) = show(io, p)
 
+## twicelevel is an integer 1..79 corresponding to the normal levels 1.0--40.0
 twicelevel(level::Real) = Int8(clamp(round(Int, 2level - 1), 1, length(cpmtab)))
 level(twicelevel::Integer) = (twicelevel+1)/2
 
-name(p::Pokebeast) = stats[p.nr, :name]
+name(nr) = stats[nr, :name]
+name(p::Pokebeast) = name(p.nr)
 nr(name::String) = get(name2nr, name, KeyError("Beast not found"))
 nr(p::Pokebeast) = p.nr
+name2nr = Dict(row[:name] => Int16(row[:nr]) for row in eachrow(stats))
 level(p::Pokebeast) = level(p.twicelevel)
+
 
 ## constructor from name and normal level
 Pokebeast(name::String, level::Real, iv::IV) = Pokebeast(nr(name), twicelevel(level), iv)
 Pokebeast(name::String, level::Real, stamina::Integer, attack::Integer, defense::Integer) = Pokebeast(name, level, IV(stamina, attack, defense))
-
-## initialize the cp modifier tables
-cpmstep = [0.009426125469, 0.008919025675, 0.008924905903, 0.00445946079]
-
-function cpmhalf(level, cpm)
-	i = round(Int, div(level, 10)) + 1
-	return sqrt.(cpm^2 + cpmstep[i])
-end
-
-c = 0.094
-cpmtab = [c]
-for i in 1:0.5:39.5
-	c = cpmhalf(i, c)
-	push!(cpmtab, c)
-end
-
-stardusttab =  repmat([200, 400, 600, 800, 1000, 1300, 1600, 1900, 2200, 2500, 3000, 3500, 4000, 4500, 5000, 6000, 7000, 8000, 9000, 10000]', 4)[1:length(cpmtab)]
-candytab = vcat(fill(1, 20), fill(2, 20), fill(3, 10), fill(4, 10), vec(repmat([6, 8, 10, 12, 15]', 4)))[1:length(cpmtab)]
 
 ## cp modifier table lookup
 cpm(level::Real) = cpmtab[twicelevel(level)]
@@ -89,6 +94,7 @@ cpm{T<:Real}(levels::Array{T}) = [cpm(level) for level in levels]
 
 hp(stamina, cpm) = floor.(Int, stamina * cpm)
 hp(p::Pokebeast) = hp(stats[p.nr, :stamina] + p.iv.stamina, cpm(p))
+hp(name::String, level::Real, iv::IV) = hp(Pokebeast(name, level, iv))
 
 function ivm(p::Pokebeast)
 	"""IV modifier"""
@@ -98,10 +104,9 @@ end
 
 cp(ivm, cpm) =  floor.(Int, ivm * cpm^2 / 10)
 cp(p::Pokebeast) = floor.(Int, ivm(p) * cpm(p)^2 / 10)
-
-hp(name::String, level::Real, iv::IV) = hp(Pokebeast(name, level, iv))
 cp(name::String, level::Real, iv::IV) = cp(Pokebeast(name, level, iv))
 
+## these functions should no longer be necessary
 function allivms(nr::Integer, twicelevel=1, fast=true)
 	beasts = Pokebeast[]
 	ivms = Float64[]
@@ -129,6 +134,7 @@ function allivms()
 end
 
 function maxstat(p::Pokebeast)
+	"""Computes the IV stats as reported by tha game"""
 	iv = [p.iv.stamina, p.iv.attack, p.iv.defense]
 	maxiv = maximum(iv)
 	s = sum(iv)
@@ -159,7 +165,8 @@ function addstats(df::AbstractDataFrame)
 	end
 end
 
-function search(nr::Integer, c::Integer, h::Integer, s::Integer, best::String="", val::Integer=-1, overall::Integer=-1)
+search(nr::Integer, c::Integer, h::Integer, s::Integer, best::String="", val::Integer=-1, overall::Integer=-1) = search(nr, c, h, s, overall, best, val)
+function search(nr::Integer, c::Integer, h::Integer, s::Integer, overall::Integer=-1, best::String="", val::Integer=-1)
 	twicelevels = find(s .== stardusttab)
 	length(twicelevels) > 0 || error("Stardust value not found")
 	ivrange = 0:15
@@ -280,7 +287,7 @@ function setlevel(level::AbstractFloat)
 	global mylevel = level
 end
 
-maxout(p::Pokebeast) = [setlevel(x, mylevel) for x in evolve(p,2)]
+maxout(p::Pokebeast) = [setlevel(x, mylevel) for x in evolve(p, 2)]
 
 function maxout(df::AbstractDataFrame)
 	cc = [candycost(level(p), mylevel) for p in df[:beast]]
