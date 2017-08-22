@@ -46,6 +46,9 @@ end
 
 stardusttab =  repmat([200, 400, 600, 800, 1000, 1300, 1600, 1900, 2200, 2500, 3000, 3500, 4000, 4500, 5000, 6000, 7000, 8000, 9000, 10000]', 4)[1:length(cpmtab)]
 candytab = vcat(fill(1, 20), fill(2, 20), fill(3, 10), fill(4, 10), vec(repmat([6, 8, 10, 12, 15]', 4)))[1:length(cpmtab)]
+bosshptab = [600, 600, 600, 1000, 1250]
+bosshp2tab = [600, 1800, 3000, 7500, 10000] ## last one is a guess
+bosscpmtab = [√√x for x in [1, 2.5, 5, 7.5, 10]]
 
 ## types
 immutable IV
@@ -61,14 +64,19 @@ type Pokebeast
 	nr::Int16
 	twicelevel::Int8 ## 1..79
 	iv::IV
-	function Pokebeast(nr::Integer, twicelevel::Integer, iv::IV)
+	boss::Int8
+	function Pokebeast(nr::Integer, twicelevel::Integer, iv::IV, boss::Integer=0)
 		1 ≤ nr ≤ nrow(stats) || throw(DomainError())
 		1 ≤ twicelevel ≤ length(cpmtab) || throw(DomainError())
-		new(nr, twicelevel, iv)
+		new(nr, twicelevel, iv, boss)
 	end
 end
 
-Base.show(io::IO, p::Pokebeast) = @printf(io, "%s (%d) l:%3.1f iv:%d,%d,%d", name(p), p.nr, level(p), p.iv.stamina, p.iv.attack, p.iv.defense)
+Base.show(io::IO, p::Pokebeast) = if p.boss == 0
+	@printf(io, "%s (%d) l:%3.1f iv:%d,%d,%d; cp: %d, hp: %d", name(p), p.nr, level(p), p.iv.stamina, p.iv.attack, p.iv.defense, cp(p), hp(p))
+else
+	@printf(io, "%s (%d) Raid boss; cp: %d, hp: %d", name(p), p.nr, cp(p), hp(p))
+end
 Base.show(io::IO, ::MIME"text/plain", p::Pokebeast) = show(io, p)
 
 ## twicelevel is an integer 1..79 corresponding to the normal levels 1.0--40.0
@@ -77,29 +85,41 @@ level(twicelevel::Integer) = (twicelevel+1)/2
 
 name(nr) = stats[nr, :name]
 name(p::Pokebeast) = name(p.nr)
-nr(name::String) = get(name2nr, name, KeyError("Beast not found"))
+nr(name::String) = name2nr[name]
 nr(p::Pokebeast) = p.nr
 name2nr = Dict(row[:name] => Int16(row[:nr]) for row in eachrow(stats))
 level(p::Pokebeast) = level(p.twicelevel)
 
-
 ## constructor from name and normal level
 Pokebeast(name::String, level::Real, iv::IV) = Pokebeast(nr(name), twicelevel(level), iv)
 Pokebeast(name::String, level::Real, stamina::Integer, attack::Integer, defense::Integer) = Pokebeast(name, level, IV(stamina, attack, defense))
+Pokebeast(name::String, boss::Int) = Pokebeast(nr(name), 79, maxIV, boss)
+
 
 ## cp modifier table lookup
 cpm(level::Real) = cpmtab[twicelevel(level)]
-cpm(p::Pokebeast) = cpmtab[clamp(p.twicelevel, 1, length(cpmtab))]
+function cpm(p::Pokebeast)
+	if p.boss > 0
+		return bosscpmtab[p.boss]
+	else
+		return cpmtab[clamp(p.twicelevel, 1, length(cpmtab))]
+	end
+end
 cpm{T<:Real}(levels::Array{T}) = [cpm(level) for level in levels]
 
 hp(stamina, cpm) = floor.(Int, stamina * cpm)
-hp(p::Pokebeast) = hp(stats[p.nr, :stamina] + p.iv.stamina, cpm(p))
+hp(p::Pokebeast) = p.boss > 0 ? bosshp2tab[p.boss] : hp(stats[p.nr, :stamina] + p.iv.stamina, cpm(p))
 hp(name::String, level::Real, iv::IV) = hp(Pokebeast(name, level, iv))
 
 function ivm(p::Pokebeast)
 	"""IV modifier"""
 	beast = stats[p.nr, :]
-	return (beast[1, :attack] + p.iv.attack) * sqrt.((beast[1, :stamina] + p.iv.stamina) * (beast[1, :defense] + p.iv.defense))
+	if p.boss > 0
+		return (beast[1, :attack] + 15) * sqrt.((beast[1, :defense] + 15) * bosshptab[p.boss])
+	else
+		return (beast[1, :attack] + p.iv.attack) *
+		        sqrt((beast[1, :stamina] + p.iv.stamina) * (beast[1, :defense] + p.iv.defense))
+	end
 end
 
 cp(ivm, cpm) =  floor.(Int, ivm * cpm^2 / 10)
@@ -133,8 +153,8 @@ function allivms()
 	return vcat(df...)
 end
 
+"""Computes the IV stats as reported by the game"""
 function maxstat(p::Pokebeast)
-	"""Computes the IV stats as reported by tha game"""
 	iv = [p.iv.stamina, p.iv.attack, p.iv.defense]
 	maxiv = maximum(iv)
 	s = sum(iv)
@@ -165,7 +185,7 @@ function addstats(df::AbstractDataFrame)
 	end
 end
 
-search(nr::Integer, c::Integer, h::Integer, s::Integer, best::String="", val::Integer=-1, overall::Integer=-1) = search(nr, c, h, s, overall, best, val)
+
 function search(nr::Integer, c::Integer, h::Integer, s::Integer, overall::Integer=-1, best::String="", val::Integer=-1)
 	twicelevels = find(s .== stardusttab)
 	length(twicelevels) > 0 || error("Stardust value not found")
@@ -221,6 +241,8 @@ function search0(nr::Integer, c::Integer, h::Integer, s::Integer, best::String="
 	return x
 end
 
+## old interface
+search(nr::Integer, c::Integer, h::Integer, s::Integer, best::String, val::Integer, overall::Integer) = search(nr, c, h, s, overall, best, val)
 search(name::String, args...) = search(nr(name), args...)
 
 ## catchall, not necessarily correct for every beast.  This evolves until no longer possible.
@@ -267,6 +289,9 @@ function evolve(df::AbstractDataFrame, times::Integer=1)
 	return addstats(DataFrame(beast=beasts, ivm=ivms, hp=hps, cp=cps))
 end
 
+boss(p::Pokebeast, bosslevel::Integer) = Pokebeast(p.nr, p.twicelevel, maxIV, bosslevel)
+boss(df::AbstractDataFrame, bosslevel::Integer) = update(df, boss, bosslevel)
+
 up(p::Pokebeast, times::Integer=1) = Pokebeast(p.nr, p.twicelevel + times, p.iv)
 up(df::AbstractDataFrame, times::Integer=1) = update(df, up, times)
 
@@ -300,62 +325,6 @@ function maxout(df::AbstractDataFrame)
 	return df
 end
 
-using Distributions
-
-Pei = Distributions.Categorical([0, 115, 0, 0, 161, 0, 0, 0, 0, 39] / 315)
-
-## how long until finding a 10K egg?  We know the exact answer: (2Pei[2] + 5Pei[5]) / Pei[10]
-function pei(dist=10)
-	d = 0.0
-	while true
-		ei = rand(Pei)
-		if ei == dist
-			return d
-		end
-		d += ei
-	end
-end
-
-## how long until we have 9 10k eggs?
-function p9ei(;dist=10, ntarget=9, spindist=0.0, logging=false)
-	d = 0.0
-	notfound = trues(ntarget)
-	togo = zeros(Float64, ntarget)
-	inc = 0
-	infinci = 0
-	while any(notfound)
-		## walk
-		mindist = minimum(togo)
-		togo[notfound] -= mindist
-		d += mindist
-		if infinci != 0 && togo[infinci] ≤ 0
-			infinci = 0
-		end
-		## spin eggs
-		newspots = Int[]
-		for i in find(togo .≤ 0)
-			ei = rand(Pei)
-			togo[i] = ei
-			if ei == dist
-				notfound[i] = false
-			else
-				push!(newspots, i)
-				inc += 1
-			end
-			d += spindist
-		end
-		## account for infinite incubator
-		if infinci == 0 && length(newspots) > 0
-			infinci = newspots[indmin(togo[newspots])]
-			inc -= 1
-		end
-	end
-	return [d, inc]
-end
-
-p9ei(N::Integer; kwargs...) = vec(mean(vcat([p9ei(;kwargs...)' for i in 1:N]...), 1))
-
-
-export Pokebeast, cp, hp, search, setlevel, evolve, candycost, stardustcost, maxout
+export Pokebeast, cp, hp, search, setlevel, evolve, boss, candycost, stardustcost, maxout
 
 end
