@@ -1,5 +1,7 @@
 module Pkm
 
+export Pokebeast, IV, cp, hp, search, setlevel, evolve, boss, candycost, stardustcost, maxout
+
 using DataFrames
 using DataArrays
 using DataFramesMeta
@@ -8,6 +10,7 @@ import Base.search, Base.cp
 
 ## Static data preparation
 statsfile = joinpath(dirname(dirname(@__FILE__)), "data", "stats.txt")
+"The basics statistics"
 stats = readtable(statsfile, separator='\t')
 
 function unpercent(a::DataArrays.DataArray)
@@ -29,14 +32,14 @@ end
 stats[:evolve] = [[x for x in [parse(Int, x) for x in split(s)] if x > 0] for s in stats[:evolve]]
 
 ## initialize the cp modifier tables
-cpmstep = [0.009426125469, 0.008919025675, 0.008924905903, 0.00445946079]
-
-function cpmhalf(level, cpm)
-	i = round(Int, div(level, 10)) + 1
-	return sqrt.(cpm^2 + cpmstep[i])
-end
-
-cpmtab = let c = 0.094, tab = [c]
+cpmtab = let
+	c = 0.094
+	tab = [c]
+	cpmstep = [0.009426125469, 0.008919025675, 0.008924905903, 0.00445946079]
+	function cpmhalf(level, cpm)
+		i = round(Int, div(level, 10)) + 1
+		return sqrt.(cpm^2 + cpmstep[i])
+	end
 	for i in 1:0.5:39.5
 		c = cpmhalf(i, c)
 		push!(tab, c)
@@ -46,12 +49,13 @@ end
 
 stardusttab =  repmat([200, 400, 600, 800, 1000, 1300, 1600, 1900, 2200, 2500, 3000, 3500, 4000, 4500, 5000, 6000, 7000, 8000, 9000, 10000]', 4)[1:length(cpmtab)]
 candytab = vcat(fill(1, 20), fill(2, 20), fill(3, 10), fill(4, 10), vec(repmat([6, 8, 10, 12, 15]', 4)))[1:length(cpmtab)]
-bosshptab = [600, 600, 600, 1000, 1250]
-bosshp2tab = [600, 1800, 3000, 7500, 10000] ## last one is a guess
+bosshptab = [600, 600, 600, 1000, 1250] ## hp for cp computation
+bosshp2tab = [600, 1800, 3000, 7500, 10000] ## hp in boss raids, last one is a guess
 bosscpmtab = [√√x for x in [1, 2.5, 5, 7.5, 10]]
 
 ## types
-immutable IV
+"Type to hold the Individual Value"
+struct IV
 	stamina::Int8
 	attack::Int8
 	defense::Int8
@@ -60,7 +64,8 @@ end
 const minIV = IV(0, 0, 0)
 const maxIV = IV(15, 15, 15)
 
-type Pokebeast
+"Struct to hold a beast"
+mutable struct Pokebeast
 	nr::Int16
 	twicelevel::Int8 ## 1..79
 	iv::IV
@@ -85,16 +90,15 @@ level(twicelevel::Integer) = (twicelevel+1)/2
 
 name(nr) = stats[nr, :name]
 name(p::Pokebeast) = name(p.nr)
+name2nr = Dict(row[:name] => Int16(row[:nr]) for row in eachrow(stats))
 nr(name::String) = name2nr[name]
 nr(p::Pokebeast) = p.nr
-name2nr = Dict(row[:name] => Int16(row[:nr]) for row in eachrow(stats))
 level(p::Pokebeast) = level(p.twicelevel)
 
 ## constructor from name and normal level
 Pokebeast(name::String, level::Real, iv::IV) = Pokebeast(nr(name), twicelevel(level), iv)
 Pokebeast(name::String, level::Real, stamina::Integer, attack::Integer, defense::Integer) = Pokebeast(name, level, IV(stamina, attack, defense))
-Pokebeast(name::String, boss::Int) = Pokebeast(nr(name), 79, maxIV, boss)
-
+Pokebeast(name::String, bosslevel::Int) = Pokebeast(nr(name), 79, maxIV, bosslevel)
 
 ## cp modifier table lookup
 cpm(level::Real) = cpmtab[twicelevel(level)]
@@ -111,8 +115,8 @@ hp(stamina, cpm) = floor.(Int, stamina * cpm)
 hp(p::Pokebeast) = p.boss > 0 ? bosshp2tab[p.boss] : hp(stats[p.nr, :stamina] + p.iv.stamina, cpm(p))
 hp(name::String, level::Real, iv::IV) = hp(Pokebeast(name, level, iv))
 
+"IV modifier"
 function ivm(p::Pokebeast)
-	"""IV modifier"""
 	beast = stats[p.nr, :]
 	if p.boss > 0
 		return (beast[1, :attack] + 15) * sqrt.((beast[1, :defense] + 15) * bosshptab[p.boss])
@@ -122,6 +126,7 @@ function ivm(p::Pokebeast)
 	end
 end
 
+"Combat power"
 cp(ivm, cpm) =  floor.(Int, ivm * cpm^2 / 10)
 cp(p::Pokebeast) = floor.(Int, ivm(p) * cpm(p)^2 / 10)
 cp(name::String, level::Real, iv::IV) = cp(Pokebeast(name, level, iv))
@@ -324,7 +329,5 @@ function maxout(df::AbstractDataFrame)
 	df[:stardust] = sc
 	return df
 end
-
-export Pokebeast, cp, hp, search, setlevel, evolve, boss, candycost, stardustcost, maxout
 
 end
