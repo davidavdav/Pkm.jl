@@ -9,9 +9,9 @@ using DataFramesMeta
 import Base.search, Base.cp
 
 ## Static data preparation
-statsfile = joinpath(dirname(dirname(@__FILE__)), "data", "stats.txt")
+statsfile = joinpath(dirname(dirname(@__FILE__)), "data", "stats.csv")
 "The basics statistics"
-stats = readtable(statsfile, separator='\t')
+stats = readtable(statsfile, separator=',')
 
 function unpercent(a::DataArrays.DataArray)
 	r = similar(a, Float64)
@@ -284,7 +284,7 @@ function evolve(df::AbstractDataFrame, times::Integer=1)
 	hps = Int[]
 	cps = Int[]
 	for row in eachrow(df)
-		for beast in evolve(row[:beast])
+		for beast in evolve(row[:beast], times)
 			push!(beasts, beast)
 			push!(ivms, ivm(beast))
 			push!(hps, hp(beast))
