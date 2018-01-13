@@ -294,6 +294,8 @@ function evolve(df::AbstractDataFrame, times::Integer=1)
 	return addstats(DataFrame(beast=beasts, ivm=ivms, hp=hps, cp=cps))
 end
 
+boss(nr::Integer, bosslevel=5, twicelevel=39, iv=maxIV) = Pokebeast(nr, twicelevel, iv, bosslevel)
+boss(name::String, bosslevel::Integer=5, level=20.0, iv=maxIV) = boss(nr(name), bosslevel, twicelevel(level), iv)
 boss(p::Pokebeast, bosslevel::Integer) = Pokebeast(p.nr, p.twicelevel, maxIV, bosslevel)
 boss(df::AbstractDataFrame, bosslevel::Integer) = update(df, boss, bosslevel)
 
@@ -301,7 +303,14 @@ up(p::Pokebeast, times::Integer=1) = Pokebeast(p.nr, p.twicelevel + times, p.iv)
 up(df::AbstractDataFrame, times::Integer=1) = update(df, up, times)
 
 setlevel(p::Pokebeast, level::Real) = Pokebeast(p.nr, twicelevel(level), p.iv)
-setlevel(df::AbstractDataFrame, level::Real) = update(df, setlevel, level)
+function setlevel(df::AbstractDataFrame, lvl::Real)
+	cc = [candycost(level(p), lvl) for p in df[:beast]]
+	sc = [stardustcost(level(p), lvl) for p in df[:beast]]
+    df = update(df, setlevel, lvl)
+	df[:candy] = cc
+	df[:stardust] = sc
+	return df
+end
 
 stardustcost(level::Real) = cumsum(stardusttab)[twicelevel(level)]
 candycost(level::Real) = cumsum(candytab)[twicelevel(level)]
