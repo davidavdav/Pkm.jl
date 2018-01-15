@@ -1,6 +1,6 @@
 module Pkm
 
-export Pokebeast, IV, cp, hp, search, setlevel, evolve, boss, candycost, stardustcost, maxout
+export Pokebeast, IV, cp, hp, nr, search, setlevel, evolve, boss, candycost, stardustcost, maxout, showstats
 
 using DataFrames
 using DataArrays
@@ -30,6 +30,8 @@ end
 
 ## turn column evolve into an (empty) array of pokebeast numbers
 stats[:evolve] = [[x for x in [parse(Int, x) for x in split(s)] if x > 0] for s in stats[:evolve]]
+
+showstats(name::String) = stats[nr(name), :]
 
 ## initialize the cp modifier tables
 cpmtab = let
@@ -77,6 +79,10 @@ mutable struct Pokebeast
 	end
 end
 
+## constructor from name and normal level
+Pokebeast(name::String, level::Real=20.0, iv::IV=maxIV; bosslevel=0) = Pokebeast(nr(name), twicelevel(level), iv, bosslevel)
+Pokebeast(name::String, level::Real, stamina::Integer, attack::Integer, defense::Integer) = Pokebeast(name, level, IV(stamina, attack, defense))
+
 Base.show(io::IO, p::Pokebeast) = if p.boss == 0
 	@printf(io, "%s (%d) l:%3.1f iv:%d,%d,%d; cp: %d, hp: %d", name(p), p.nr, level(p), p.iv.stamina, p.iv.attack, p.iv.defense, cp(p), hp(p))
 else
@@ -94,11 +100,6 @@ name2nr = Dict(row[:name] => Int16(row[:nr]) for row in eachrow(stats))
 nr(name::String) = name2nr[name]
 nr(p::Pokebeast) = p.nr
 level(p::Pokebeast) = level(p.twicelevel)
-
-## constructor from name and normal level
-Pokebeast(name::String, level::Real, iv::IV) = Pokebeast(nr(name), twicelevel(level), iv)
-Pokebeast(name::String, level::Real, stamina::Integer, attack::Integer, defense::Integer) = Pokebeast(name, level, IV(stamina, attack, defense))
-Pokebeast(name::String, bosslevel::Int) = Pokebeast(nr(name), 79, maxIV, bosslevel)
 
 ## cp modifier table lookup
 cpm(level::Real) = cpmtab[twicelevel(level)]
