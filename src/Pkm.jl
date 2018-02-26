@@ -2,8 +2,10 @@ module Pkm
 
 export Pokebeast, IV, cp, hp, nr, search, setlevel, evolve, boss, candycost, stardustcost, maxout, showstats
 
+using CSV
 using DataFrames
 using DataArrays
+using CategoricalArrays
 using DataFramesMeta
 
 import Base.search, Base.cp
@@ -11,13 +13,13 @@ import Base.search, Base.cp
 ## Static data preparation
 statsfile = joinpath(dirname(dirname(@__FILE__)), "data", "stats.csv")
 "The basics statistics"
-stats = readtable(statsfile, separator=',')
+stats = CSV.read(statsfile, nullable=true)
 
-function unpercent(a::DataArrays.DataArray)
+function unpercent(a::CategoricalArrays.CategoricalArray)
 	r = similar(a, Float64)
 	percent_re = r"(\d+)%"
 	for i in 1:length(a)
-		if !isna(a[i])
+		if !ismissing(a[i])
 			r[i] = parse(Float64, match(percent_re, a[i]).captures[1]) / 100
 		end
 	end
@@ -32,6 +34,7 @@ end
 stats[:evolve] = [[x for x in [parse(Int, x) for x in split(s)] if x > 0] for s in stats[:evolve]]
 
 showstats(name::String) = stats[nr(name), :]
+showstats(names::Array) = stats[[nr(name) for name in names], :]
 
 ## initialize the cp modifier tables
 cpmtab = let
@@ -307,7 +310,7 @@ setlevel(p::Pokebeast, level::Real) = Pokebeast(p.nr, twicelevel(level), p.iv)
 function setlevel(df::AbstractDataFrame, lvl::Real)
 	cc = [candycost(level(p), lvl) for p in df[:beast]]
 	sc = [stardustcost(level(p), lvl) for p in df[:beast]]
-    df = update(df, setlevel, lvl)
+    df = update(deepcopy(df), setlevel, lvl)
 	df[:candy] = cc
 	df[:stardust] = sc
 	return df
