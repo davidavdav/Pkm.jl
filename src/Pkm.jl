@@ -195,7 +195,7 @@ function addstats(df::AbstractDataFrame)
 end
 
 
-function search(nr::Integer, c::Integer, h::Integer, s::Integer, overall::Integer=-1, best::String="", val::Integer=-1)
+function search(nr::Integer, c::Integer, h::Integer, s::Integer, overall::Integer=-1, best::AbstractString="", val::Integer=-1)
 	twicelevels = find(s .== stardusttab)
 	length(twicelevels) > 0 || error("Stardust value not found")
 	ivrange = 0:15
@@ -252,7 +252,16 @@ end
 
 ## old interface
 search(nr::Integer, c::Integer, h::Integer, s::Integer, best::String, val::Integer, overall::Integer) = search(nr, c, h, s, overall, best, val)
-search(name::String, args...) = search(nr(name), args...)
+## shortcuts
+search(name::AbstractString, args...) = search(nr(name), args...)
+function search(name::String, c::Integer, h::Integer, s::Integer, appraise::AbstractString)
+    m = match(r"([0-3])?([sad]+)([0-3])?", appraise)
+    m == nothing && return search(name, c, h, s)
+    overall, val = [m.captures[i] == nothing ? 3 : parse(Int, m.captures[i]) for i in (1, 3)]
+    best = m.captures[2]
+    return search(name, c, h, s, overall, best, val)
+end
+search(name::AbstractString, c::Integer, h::Integer, s::Integer, appraise::Symbol) = search(name, c, h, s, String(appraise))
 
 ## catchall, not necessarily correct for every beast.  This evolves until no longer possible.
 ## This function returns an array of Inr
