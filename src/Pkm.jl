@@ -1,3 +1,5 @@
+__precompile__()
+
 module Pkm
 
 export Pokebeast, IV, cp, hp, nr, search, setlevel, evolve, boss, candycost, stardustcost, maxout, showstats
