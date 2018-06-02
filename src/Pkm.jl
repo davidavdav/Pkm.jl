@@ -15,14 +15,16 @@ import Base.search, Base.cp
 ## Static data preparation
 statsfile = joinpath(dirname(dirname(@__FILE__)), "data", "stats.csv")
 "The basics statistics"
-stats = CSV.read(statsfile, nullable=true)
+stats = CSV.read(statsfile, allowmissing=:all)
 
 function unpercent(a::CategoricalArrays.CategoricalArray)
-	r = similar(a, Float64)
+	r = similar(a, Union{Float64, Missings.Missing})
 	percent_re = r"(\d+)%"
 	for i in 1:length(a)
 		if !ismissing(a[i])
 			r[i] = parse(Float64, match(percent_re, a[i]).captures[1]) / 100
+		else
+			r[i] = Missings.missing
 		end
 	end
 	return r
@@ -263,7 +265,11 @@ function search(name::String, c::Integer, h::Integer, s::Integer, appraise::Abst
     best = m.captures[2]
     return search(name, c, h, s, overall, best, val)
 end
+
 search(name::AbstractString, c::Integer, h::Integer, s::Integer, appraise::Symbol) = search(name, c, h, s, String(appraise))
+search(name::AbstractString, cp::Integer, hp::Integer, appraise::AbstractString) = search(name, cp, hp, 2500, appraise)
+search(name::AbstractString, cp::Integer, hp::Integer, appraise::Symbol) = search(name, cp, hp, 2500, String(appraise))
+
 
 ## catchall, not necessarily correct for every beast.  This evolves until no longer possible.
 ## This function returns an array of Inr
@@ -353,5 +359,7 @@ function maxout(df::AbstractDataFrame)
 	df[:stardust] = sc
 	return df
 end
+
+stats[:name] = copy(stats[:name])
 
 end
